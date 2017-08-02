@@ -5,6 +5,7 @@
 
 #define TEST_A "dir/a"
 #define TEST_B "dir/b"
+#define TEST_C "dir/c"
 
 void error_out()
 {
@@ -18,7 +19,13 @@ int main()
 	
 	printf("In the beginning, correlation total: %ld\n\n", corr_list(TEST_A, list_buffer, 1024));
 
-	if (corr_set(TEST_A, TEST_B, CORR_TYPE_DATA | CORR_LINK_DUAL, CORR_MODE_NORMAL))
+	if (corr_set(TEST_A, TEST_B, CORR_TYPE_DATA | CORR_LINK_DUAL, CORR_MODE_NORMAL) < 0)
+	{
+		error_out();
+		return 0;
+	}
+
+	if (corr_set(TEST_A, TEST_C, CORR_TYPE_TIME | CORR_LINK_NONREVERSING, CORR_MODE_NORMAL) < 0)
 	{
 		error_out();
 		return 0;
@@ -40,7 +47,7 @@ int main()
 	{
 		sscanf(list_pt, "%s", corr_buffer);
 		list_pt += strlen(corr_buffer) + 1;
-		if (corr_get(TEST_A, TEST_B, &flag) < 0)
+		if (corr_get(TEST_A, corr_buffer, &flag) < 0)
 		{
 			error_out();
 			return 0;
@@ -49,6 +56,12 @@ int main()
 	}
 
 	if (corr_rm(TEST_A, TEST_B, CORR_TYPE_DATA | CORR_LINK_DUAL) < 0)
+	{
+		error_out();
+		return 0;
+	}
+
+	if (corr_rm(TEST_A, TEST_C, CORR_TYPE_TIME | CORR_LINK_NONREVERSING) < 0)
 	{
 		error_out();
 		return 0;
