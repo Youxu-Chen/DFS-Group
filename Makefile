@@ -9,7 +9,7 @@ corr.o:	corr.c
 	${CC} -c corr.c -o corr.o ${CFLAGS}
 
 test:	test.c ${SRC_CORR}
-	${CC} test.c corr.o -o test ${CFLAGS}
+	${CC} test.c ${SRC_CORR} -o test ${CFLAGS}
 
 .PHONY:
 clean:
