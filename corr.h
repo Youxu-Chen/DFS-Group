@@ -4,12 +4,12 @@
 #include <sys/types.h>	// to use size_t
 #include <attr/xattr.h>
 
-// type of flag: 8 bits
+// type of flag: 8 bits (1 byte)
 #ifndef uint8_t
 #define uint8_t unsigned char
 #endif
 
-#define CORR_FLAG_LEN 8
+#define CORR_FLAG_LEN 1
 
 // maximum length of path
 #define MAX_PATH_LEN 4096
