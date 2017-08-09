@@ -111,6 +111,13 @@ Server::Server(MDSRank *m) :
   failed_reconnects(0),
   terminating_sessions(false)
 {
+  pthread_t tid;
+  int r;
+  mon_req_init();
+  r = pthread_create(&tid, NULL, count_load_thread, this);
+  if(r < 0)
+    dout(1) << __func__ << "create thread error!" << dendl;
+  pthread_detach(tid);
 }
 
 
@@ -1329,14 +1336,19 @@ void Server::set_trace_dist(Session *session, MClientReply *reply,
 
   // corefs-encoding inode_prefetched and dentry_prefetched
   vector<CInode*> tracei_prefetched = mdr->tracei_prefetched;
+  vector<vector<CDentry*>> tracedn_prefetched = mdr->tracedn_prefetched;
   CDir *dir_prefetched;
   CInode *diri_prefetched;
-  int num_inode_prefetched = 1;
+  int num_inode_prefetched = 0;
   int i = 0;
 
-  for(vector<vector<CDentry*>>::iterator iter = mdr->tracedn_prefetched.begin(); iter != mdr->tracedn_prefetched.end(); iter++, i++){
-    ::encode(mdr->tracedn_prefetched[i].size(), bl);
-    dout(2) << "corefs_set_trace_dist num_dn[" << i << "]=" << mdr->tracedn_prefetched[i].size() << dendl;
+  dout(2) << "corefs_test num_inode_encode " << tracei_prefetched.size() << dendl;
+  dout(2) << "corefs_test num_dn_vector " << tracedn_prefetched.size() << dendl;
+  for(vector<vector<CDentry*>>::iterator iter = tracedn_prefetched.begin(); iter != tracedn_prefetched.end(); iter++, i++){
+    dout(2) << "corefs_test num_dn in vector " << i << " is "  << (*iter).size() << dendl;
+    num_inode_prefetched++;
+    ::encode(tracedn_prefetched[i].size(), bl);
+    dout(2) << "corefs_set_trace_dist num_dn[" << i << "]=" << tracedn_prefetched[i].size() << dendl;
 
     for(vector<CDentry*>::iterator v_iter = (*iter).begin(); v_iter != (*iter).end(); v_iter++){
       dir_prefetched = (*v_iter)->get_dir();
@@ -1361,8 +1373,24 @@ void Server::set_trace_dist(Session *session, MClientReply *reply,
       tracei_prefetched[i]->encode_inodestat(bl, session, NULL, snapid, 0, mdr->getattr_caps);
       dout(2) << "corefs_set_trace_dist added inode " << *(tracei_prefetched[i]) << dendl;
   }
-  reply->head.is_target = num_inode_prefetched + i;
-  dout(2) << "corefs num_inode_prefetched=" << num_inode_prefetched +i - 1 << dendl;
+  // free memory
+  // std::vector<CInode*>().swap(mdr->tracei_prefetched);
+  mdr->tracei_prefetched.clear();
+  // mdr->tracei_prefetched.shrink_to_fit();
+  dout(2) << "corefs_vector_i after swap size." << mdr->tracei_prefetched.capacity() << dendl;
+  // std::vector<std::vector<CDentry*>>().swap(mdr->tracedn_prefetched);
+  mdr->tracedn_prefetched.clear();
+  // mdr->tracedn_prefetched.shrink_to_fit();
+  dout(2) << "corefs_vector_dn after swap size." << mdr->tracedn_prefetched.capacity() << dendl;
+  // std::vector<CInode*>().swap(tracei_prefetched);
+  tracei_prefetched.clear();
+  // tracei_prefetched.shrink_to_fit();
+  // std::vector<std::vector<CDentry*>>().swap(tracedn_prefetched);
+  tracedn_prefetched.clear();
+  // tracedn_prefetched.shrink_to_fit();
+  if(num_inode_prefetched)
+    reply->head.is_target = 2;
+  dout(2) << "corefs num_inode_prefetched=" << num_inode_prefetched << dendl;
 
   reply->set_trace(bl);
 }
@@ -1524,13 +1552,6 @@ void Server::dispatch_client_request(MDRequestRef& mdr)
   if (logger) logger->inc(l_mdss_dispatch_client_request);
 
   dout(7) << "dispatch_client_request " << *req << dendl;
-  // dout(7) << __func__ << " test for cache_traverse" << dendl;
-  // corefs
-  // string s = "/cyx_1/cyx_2/cyx_3/cyx_4/file1";
-  // filepath path(s.c_str());
-  // CInode *in = mdcache->cache_traverse(path);
-  // if(in)
-  //   dout(7) << __func__ << " cache_traverse path:" << path.get_path() << " ino:" << *in << dendl;
 
   // we shouldn't be waiting on anyone.
   assert(mdr->more()->waiting_on_slave.empty());
@@ -1568,106 +1589,320 @@ void Server::dispatch_client_request(MDRequestRef& mdr)
       dout(20) << __func__ << ": full, permitting op " << ceph_mds_op_name(req->get_op()) << dendl;
     }
   }
-
-  dout(20) << __func__ << "req.op = " << req->get_op() << dendl;
+  // corefs
   switch (req->get_op()) {
   case CEPH_MDS_OP_LOOKUPHASH:
   case CEPH_MDS_OP_LOOKUPINO:
+    mon_req[OP_LOOKUPINO]++;
+    dout(1) << "-handle_client_lookup_ino-" << " (start, OP_LOOKUPINO, path." << req->get_filepath() << ")" << dendl;
     handle_client_lookup_ino(mdr, false, false);
     break;
   case CEPH_MDS_OP_LOOKUPPARENT:
+    mon_req[OP_LOOKUPINO]++;
+    dout(1) << "-handle_client_lookup_ino-" << " (start, OP_LOOKUPINO, path." << req->get_filepath() << ")" << dendl;
     handle_client_lookup_ino(mdr, true, false);
     break;
   case CEPH_MDS_OP_LOOKUPNAME:
+    mon_req[OP_LOOKUPINO]++;
+    dout(1) << "-handle_client_lookup_ino-" << " (start, OP_LOOKUPINO, path." << req->get_filepath() << ")" << dendl;
     handle_client_lookup_ino(mdr, false, true);
     break;
 
     // inodes ops.
   case CEPH_MDS_OP_LOOKUP:
+    mon_req[OP_LOOKUP]++;
+    dout(1) << "-handle_client_getattr-" << " (start, OP_LOOKUP, path." << req->get_filepath() << ")" << dendl;
     handle_client_getattr(mdr, true);
     break;
 
   case CEPH_MDS_OP_LOOKUPSNAP:
     // lookupsnap does not reference a CDentry; treat it as a getattr
   case CEPH_MDS_OP_GETATTR:
+    mon_req[OP_GETATTR]++;
+    dout(1) << "-handle_client_getattr-" << " (start, OP_GETATTR, path." << req->get_filepath() << ")" << dendl;
     handle_client_getattr(mdr, false);
     break;
 
   case CEPH_MDS_OP_SETATTR:
+    mon_req[OP_SETATTR]++;
+    dout(1) << "-handle_client_setattr-" << " (start, OP_SETATTR, path." << req->get_filepath() << ")" << dendl;
     handle_client_setattr(mdr);
     break;
   case CEPH_MDS_OP_SETLAYOUT:
+    mon_req[OP_SETLAYOUT]++;
+    dout(1) << "-handle_client_setlayout-" << " (start, OP_SETLAYOUT, path." << req->get_filepath() << ")" << dendl;
     handle_client_setlayout(mdr);
     break;
   case CEPH_MDS_OP_SETDIRLAYOUT:
+    mon_req[OP_SETDIRLAYOUT]++;
+    dout(1) << "-handle_client_setdirlayout-" << " (start, OP_SETLAYOUT, path." << req->get_filepath() << ")" << dendl;
     handle_client_setdirlayout(mdr);
     break;
   case CEPH_MDS_OP_SETXATTR:
+    dout(1) << "-handle_client_setxattr-" << " (start, OP_SETXATTR, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_SETXATTR]++;
     handle_client_setxattr(mdr);
     break;
   case CEPH_MDS_OP_RMXATTR:
+    dout(1) << "-handle_client_removexattr-" << " (start, OP_RMXATTR, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_RMXATTR]++;
     handle_client_removexattr(mdr);
     break;
 
   case CEPH_MDS_OP_READDIR:
+    dout(1) << "-handle_client_readdir-" << " (start, OP_READDIR, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_READDIR]++;
     handle_client_readdir(mdr);
     break;
 
   case CEPH_MDS_OP_SETFILELOCK:
+    dout(1) << "-handle_client_file_setlock-" << " (start, OP_SETFILELOCK, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_SETFILELOCK]++;
     handle_client_file_setlock(mdr);
     break;
 
   case CEPH_MDS_OP_GETFILELOCK:
+    dout(1) << "-handle_client_file_readlock-" << " (start, OP_GETFILELOCK, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_GETFILELOCK]++;
     handle_client_file_readlock(mdr);
     break;
 
     // funky.
   case CEPH_MDS_OP_CREATE:
-    if (mdr->has_completed)
+    if (mdr->has_completed){
+      mon_req[OP_OPEN]++;
+      dout(1) << "-handle_client_open-" << " (start, OP_OPEN, path." << req->get_filepath() << ")" << dendl;
       handle_client_open(mdr);  // already created.. just open
-    else
+    }
+    else{
+      dout(1) << "-handle_client_openc-" << " (start, OP_CREATE, path." << req->get_filepath() << ")" << dendl;
+      mon_req[OP_CREATE]++;
       handle_client_openc(mdr);
+    }
+      
     break;
 
   case CEPH_MDS_OP_OPEN:
+    dout(1) << "-handle_client_open-" << " (start, OP_OPEN, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_OPEN]++;
     handle_client_open(mdr);
     break;
 
     // namespace.
     // no prior locks.
   case CEPH_MDS_OP_MKNOD:
+    dout(1) << "-handle_client_mknod-" << " (start, OP_MKNOD, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_MKNOD]++;
     handle_client_mknod(mdr);
     break;
   case CEPH_MDS_OP_LINK:
+    dout(1) << "-handle_client_link-" << " (start, OP_LINK, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_LINK]++;
     handle_client_link(mdr);
     break;
   case CEPH_MDS_OP_UNLINK:
   case CEPH_MDS_OP_RMDIR:
+    dout(1) << "-handle_client_unlink-" << " (start, OP_UNLINK, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_UNLINK]++;
     handle_client_unlink(mdr);
     break;
   case CEPH_MDS_OP_RENAME:
+    dout(1) << "-handle_client_rename-" << " (start, OP_RENAME, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_RENAME]++;
     handle_client_rename(mdr);
     break;
   case CEPH_MDS_OP_MKDIR:
+    dout(1) << "-handle_client_mkdir-" << " (start, OP_MKDIR, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_MKDIR]++;
     handle_client_mkdir(mdr);
     break;
   case CEPH_MDS_OP_SYMLINK:
+    dout(1) << "-handle_client_symlink-" << " (start, OP_SYMLINK, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_SYMLINK]++;
     handle_client_symlink(mdr);
     break;
 
 
     // snaps
   case CEPH_MDS_OP_LSSNAP:
+    dout(1) << "-handle_client_lssnap-" << " (start, OP_LSSNAP, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_LSSNAP]++;
     handle_client_lssnap(mdr);
     break;
   case CEPH_MDS_OP_MKSNAP:
+    dout(1) << "-handle_client_mksnap-" << " (start, OP_MKSNAP, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_MKSNAP]++;
     handle_client_mksnap(mdr);
     break;
   case CEPH_MDS_OP_RMSNAP:
+    dout(1) << "-handle_client_rmsnap-" << " (start, OP_RMSNAP, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_RMSNAP]++;
     handle_client_rmsnap(mdr);
     break;
   case CEPH_MDS_OP_RENAMESNAP:
+    dout(1) << "-handle_client_renamesnap-" << " (start, OP_RENAMESNAP, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_RENAMESNAP]++;
     handle_client_renamesnap(mdr);
+    break;
+
+  default:
+    dout(1) << " unknown client op " << req->get_op() << dendl;
+    respond_to_request(mdr, -EOPNOTSUPP);
+  }
+
+  // corefs
+  switch (req->get_op()) {
+  case CEPH_MDS_OP_LOOKUPHASH:
+  case CEPH_MDS_OP_LOOKUPINO:
+    dout(1) << "-handle_client_lookup_ino-" << " (end, OP_LOOKUPINO, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_LOOKUPINO]--;
+    mon_op[OP_LOOKUPINO]++;
+    break;
+  case CEPH_MDS_OP_LOOKUPPARENT:
+    dout(1) << "-handle_client_lookup_ino-" << " (end, OP_LOOKUPINO, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_LOOKUPINO]--;
+    mon_op[OP_LOOKUPINO]++;
+    break;
+  case CEPH_MDS_OP_LOOKUPNAME:
+    dout(1) << "-handle_client_lookup_ino-" << " (end, OP_LOOKUPINO, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_LOOKUPINO]--;
+    mon_op[OP_LOOKUPINO]++;
+    break;
+
+    // inodes ops.
+  case CEPH_MDS_OP_LOOKUP:
+    dout(1) << "-handle_client_getattr-" << " (end, OP_LOOKUP, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_LOOKUP]--;
+    mon_op[OP_LOOKUP]++;
+    break;
+
+  case CEPH_MDS_OP_LOOKUPSNAP:
+    // lookupsnap does not reference a CDentry; treat it as a getattr
+  case CEPH_MDS_OP_GETATTR:
+    dout(1) << "-handle_client_getattr-" << " (end, OP_GETATTR, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_GETATTR]--;
+    mon_op[OP_GETATTR]++;
+    break;
+
+  case CEPH_MDS_OP_SETATTR:
+    dout(1) << "-handle_client_setattr-" << " (end, OP_SETATTR, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_SETATTR]--;
+    mon_op[OP_SETATTR]++;
+    break;
+  case CEPH_MDS_OP_SETLAYOUT:
+    dout(1) << "-handle_client_setlayout-" << " (end, OP_SETLAYOUT, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_SETLAYOUT]--;
+    mon_op[OP_SETLAYOUT]++;
+    break;
+  case CEPH_MDS_OP_SETDIRLAYOUT:
+    dout(1) << "-handle_client_setdirlayout-" << " (end, OP_SETLAYOUT, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_SETDIRLAYOUT]--;
+    mon_op[OP_SETDIRLAYOUT]++;
+    break;
+  case CEPH_MDS_OP_SETXATTR:
+    dout(1) << "-handle_client_setxattr-" << " (end, OP_SETXATTR, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_SETXATTR]--;
+    mon_op[OP_SETXATTR]++;
+    break;
+  case CEPH_MDS_OP_RMXATTR:
+    dout(1) << "-handle_client_removexattr-" << " (end, OP_RMXATTR, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_RMXATTR]--;
+    mon_op[OP_RMXATTR]++;
+    break;
+
+  case CEPH_MDS_OP_READDIR:
+    dout(1) << "-handle_client_readdir-" << " (end, OP_READDIR, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_READDIR]--;
+    mon_op[OP_READDIR]++;
+    break;
+
+  case CEPH_MDS_OP_SETFILELOCK:
+    dout(1) << "-handle_client_file_setlock-" << " (end, OP_SETFILELOCK, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_SETFILELOCK]--;
+    mon_op[OP_SETFILELOCK]++;
+    break;
+
+  case CEPH_MDS_OP_GETFILELOCK:
+    dout(1) << "-handle_client_file_readlock-" << " (end, OP_GETFILELOCK, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_GETFILELOCK]--;
+    mon_op[OP_GETFILELOCK]++;
+    break;
+
+    // funky.
+  case CEPH_MDS_OP_CREATE:
+    if (mdr->has_completed){
+      dout(1) << "-handle_client_open-" << " (end, OP_OPEN, path." << req->get_filepath() << ")" << dendl;
+      mon_req[OP_OPEN]--; // already created.. just open
+      mon_op[OP_OPEN]++;
+    }
+    else{
+      dout(1) << "-handle_client_openc-" << " (end, OP_CREATE, path." << req->get_filepath() << ")" << dendl;
+      mon_req[OP_CREATE]--;
+      mon_op[OP_CREATE]++;
+    }
+    break;
+
+  case CEPH_MDS_OP_OPEN:
+    dout(1) << "-handle_client_open-" << " (end, OP_OPEN, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_OPEN]--;
+    mon_op[OP_OPEN]++;
+    break;
+
+    // namespace.
+    // no prior locks.
+  case CEPH_MDS_OP_MKNOD:
+    dout(1) << "-handle_client_mknod-" << " (end, OP_MKNOD, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_MKNOD]--;
+    mon_op[OP_MKNOD]++;
+    break;
+  case CEPH_MDS_OP_LINK:
+    dout(1) << "-handle_client_link-" << " (end, OP_LINK, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_LINK]--;
+    mon_op[OP_LINK]++;
+    break;
+  case CEPH_MDS_OP_UNLINK:
+  case CEPH_MDS_OP_RMDIR:
+    dout(1) << "-handle_client_unlink-" << " (end, OP_UNLINK, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_UNLINK]--;
+    mon_op[OP_UNLINK]++;
+    break;
+  case CEPH_MDS_OP_RENAME:
+    dout(1) << "-handle_client_rename-" << " (end, OP_RENAME, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_RENAME]--;
+    mon_op[OP_RENAME]++;
+    break;
+  case CEPH_MDS_OP_MKDIR:
+    dout(1) << "-handle_client_mkdir-" << " (end, OP_MKDIR, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_MKDIR]--;
+    mon_op[OP_MKDIR]++;
+    break;
+  case CEPH_MDS_OP_SYMLINK:
+    dout(1) << "-handle_client_symlink-" << " (end, OP_SYMLINK, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_SYMLINK]--;
+    mon_op[OP_SYMLINK]++;
+    break;
+
+
+    // snaps
+  case CEPH_MDS_OP_LSSNAP:
+    dout(1) << "-handle_client_lssnap-" << " (end, OP_LSSNAP, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_LSSNAP]--;
+    mon_op[OP_LSSNAP]++;
+    break;
+  case CEPH_MDS_OP_MKSNAP:
+    dout(1) << "-handle_client_mksnap-" << " (end, OP_MKSNAP, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_MKSNAP]--;
+    mon_op[OP_MKSNAP]++;
+    break;
+  case CEPH_MDS_OP_RMSNAP:
+    dout(1) << "-handle_client_rmsnap-" << " (end, OP_RMSNAP, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_RMSNAP]--;
+    mon_op[OP_RMSNAP]++;
+    break;
+  case CEPH_MDS_OP_RENAMESNAP:
+    dout(1) << "-handle_client_renamesnap-" << " (end, OP_RENAMESNAP, path." << req->get_filepath() << ")" << dendl;
+    mon_req[OP_RENAMESNAP]--;
+    mon_op[OP_RENAMESNAP]++;
     break;
 
   default:
@@ -2812,6 +3047,38 @@ void Server::handle_client_getattr(MDRequestRef& mdr, bool is_lookup)
   mds->balancer->hit_inode(ceph_clock_now(g_ceph_context), ref, META_POP_IRD,
 			   mdr->client_request->get_source().num());
 
+  // if(is_lookup){
+  //     // corefs - prefetching dentry
+  //   vector<CDentry*> dn_prefetched;
+  //   CInode *cin_prefetched;
+  //   map<std::string, bufferptr>::iterator p = ref->xattrs.begin();
+  //   std::string filename_corre;
+  //   int j = 0;
+  //   int max = 10;
+  //   for(p; p != ref->xattrs.end(); p++, j++){
+  //     if(j >= max)
+  //       break;
+  //     filename_corre = p->first;
+  //     filename_corre = "/files"+filename_corre;
+  //     dout(2) << __func__ << "lookup_prefetching " << j << " xattr" << dendl;
+  //     dout(2) << __func__ << " lookup_prefetching inode and dentry.  Path." << filename_corre << dendl;
+  //     int r = mdcache->path_traverse(mdr, NULL, NULL, filepath(filename_corre.c_str()), &dn_prefetched, &cin_prefetched, MDS_TRAVERSE_FORWARD);
+  //      if (cin_prefetched != NULL){
+  //         mdr->tracei_prefetched.push_back(cin_prefetched);
+  //         if (dn_prefetched.size() > 0){
+  //             dout(2) << __func__ << " lookup_prefetched dentry done. Path." << filename_corre << dendl;
+  //             vector<CDentry*>::iterator p;
+  //             for(p = dn_prefetched.begin(); p != dn_prefetched.end(); p++)
+  //               dout(2) << __func__ << " lookup_prefetched dentry:" << *(*p) << dendl;
+  //             mdr->tracedn_prefetched.push_back(dn_prefetched);
+  //          }
+  //         else{  // 
+  //           dout(2) << __func__ << " lookup_prefetched dentry failed. Path." << filename_corre << dendl;
+  //         }
+  //      }   
+  //   }
+  // }
+
   // reply
   dout(10) << "reply to stat on " << *req << dendl;
   mdr->tracei = ref;
@@ -3142,29 +3409,43 @@ void Server::handle_client_open(MDRequestRef& mdr)
 
 
     // corefs - prefetching dentry
+    vector<CInode*> in_prefethced;
+    vector<vector<CDentry*>> v_dn_prefetched;
     vector<CDentry*> dn_prefetched;
+    
+    std::vector<CDentry*>::iterator pdn;
     CInode *cin_prefetched;
-    map<std::string, bufferptr>::iterator p = cur->xattrs.begin();
+    std::map<std::string, bufferptr>::iterator pxat = cur->xattrs.begin();
     std::string filename_corre;
-
-    for(p; p != cur->xattrs.end(); p++){
-      filename_corre = p->first;
-      dout(1) << __func__ << " prefetching inode and dentry.  Path." << filename_corre << dendl;
+    int j = 0;
+    int max = 5;
+    for(pxat; pxat != cur->xattrs.end(); pxat++, j++){
+      if(j >= max)
+        break;
+      filename_corre = pxat->first;
+      filename_corre = "/files"+filename_corre;
+      dout(2) << __func__ << " prefetching " << j << " xattr" << dendl;
+      dout(2) << __func__ << " prefetching inode and dentry.  Path." << filename_corre << dendl;
       int r = mdcache->path_traverse(mdr, NULL, NULL, filepath(filename_corre.c_str()), &dn_prefetched, &cin_prefetched, MDS_TRAVERSE_FORWARD);
        if (cin_prefetched != NULL){
-          mdr->tracei_prefetched.push_back(cin_prefetched);
+          in_prefethced.push_back(cin_prefetched);
           if (dn_prefetched.size() > 0){
-              dout(1) << __func__ << " prefetched dentry done. Path." << filename_corre << dendl;
-              vector<CDentry*>::iterator p;
-              for(p = dn_prefetched.begin(); p != dn_prefetched.end(); p++)
-                dout(1) << __func__ << " prefetched dentry:" << *(*p) << dendl;
-              mdr->tracedn_prefetched.push_back(dn_prefetched);
+              dout(2) << __func__ << " prefetched dentry done. Path." << filename_corre << dendl;
+              // vector<CDentry*>::iterator pdn;
+              // for(pdn = dn_prefetched.begin(); pdn != dn_prefetched.end(); pdn++)
+              //   dout(2) << __func__ << " prefetched dentry:" << *(*pdn) << dendl;
+              v_dn_prefetched.push_back(dn_prefetched);
            }
           else{  // 
-            dout(1) << __func__ << " prefetched dentry failed. Path." << filename_corre << dendl;
+            dout(2) << __func__ << " prefetched dentry failed. Path." << filename_corre << dendl;
           }
-       }   
+       }
+         
     }
+    dout(2) << "corefs_pre num_inode " << in_prefethced.size() << dendl;
+    dout(2) << "corefs_pre num_dn " << v_dn_prefetched.size() << dendl;
+    mdr->tracei_prefetched = in_prefethced;
+    mdr->tracedn_prefetched = v_dn_prefetched;
 
   mdr->tracei = cur;
   mdr->tracedn = dn;

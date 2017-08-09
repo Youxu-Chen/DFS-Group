@@ -43,6 +43,40 @@ enum {
   l_mdss_last,
 };
 
+// corefs
+enum{
+  OP_LOOKUP,//
+  OP_GETATTR,//
+  OP_LOOKUPINO,//
+
+  OP_SETXATTR,//
+  OP_RMXATTR,//
+  OP_SETLAYOUT,//
+  OP_SETATTR,//
+  OP_SETFILELOCK,//
+  OP_GETFILELOCK,//
+  OP_SETDIRLAYOUT,//
+
+  OP_MKNOD,//
+  OP_LINK,//
+  OP_UNLINK,//
+  OP_RENAME,//
+  OP_MKDIR,//
+  OP_SYMLINK,//
+
+  OP_CREATE,//
+  OP_OPEN,//
+  OP_READDIR,//
+
+  OP_MKSNAP,//
+  OP_RMSNAP,//
+  OP_LSSNAP,//
+  OP_RENAMESNAP,
+
+  OP_NUM
+
+};
+
 class Server {
 private:
   MDSRank *mds;
@@ -278,6 +312,13 @@ public:
   char* corefs_get_xattrs(CInode *cin);
   int corefs_get_correlations(CInode *target, char** c);
   CInode *corefs_prefetch_cinode(char* filename);
+
+  public:
+  int mon_req[OP_NUM];
+  int mon_op[OP_NUM];
+  // corefs
+  void mon_req_init();
+  static void* count_load_thread(void* args);
   
 private:
   void reply_client_request(MDRequestRef& mdr, MClientReply *reply);

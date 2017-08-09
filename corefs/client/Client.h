@@ -258,6 +258,9 @@ struct dir_result_t {
 
 class Client : public Dispatcher, public md_config_obs_t {
  public:
+  unsigned long num_mdr;
+
+ public:
   using Dispatcher::cct;
 
   PerfCounters *logger;

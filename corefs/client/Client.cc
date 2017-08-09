@@ -266,6 +266,8 @@ Client::Client(Messenger *m, MonClient *mc)
     unsafe_sync_write(0),
     client_lock("Client::client_lock")
 {
+  num_mdr = 0;
+
   monclient->set_messenger(m);
 
   _reset_faked_inos();
@@ -838,6 +840,8 @@ void Client::_fragmap_remove_non_leaves(Inode *in)
 Inode * Client::add_update_inode(InodeStat *st, utime_t from,
 				 MetaSession *session)
 {
+
+  ldout(cct, 10) << __func__ << dendl;
   Inode *in;
   bool was_new = false;
   if (inode_map.count(st->vino)) {
@@ -1307,31 +1311,37 @@ Inode* Client::insert_trace(MetaRequest *request, MetaSession *session)
     dst.decode(p);
     ::decode(dname, p);
     ::decode(dlease, p);
+    Inode *tmp = NULL;
+    tmp = add_update_inode(&dirst, request->sent_stamp, session);
+    ldout(cct, 2) << __func__ << *tmp << dendl;
   }
-
+  
   Inode *in = 0;
   if (reply->head.is_target) {
     ldout(cct, 2) << __func__ << " decoding inode" << dendl;
     ist.decode(p, features);
+    ldout(cct, 2) << __func__ << " enter if to debug caps 1" << dendl;
     if (cct->_conf->client_debug_getattr_caps) {
+      ldout(cct, 2) << __func__ << " enter if to debug caps 2" << dendl;
       unsigned wanted = 0;
       if (op == CEPH_MDS_OP_GETATTR || op == CEPH_MDS_OP_LOOKUP)
 	wanted = request->head.args.getattr.mask;
       else if (op == CEPH_MDS_OP_OPEN || op == CEPH_MDS_OP_OPEN)
 	wanted = request->head.args.open.mask;
-
+      ldout(cct, 2) << __func__ << " enter if to debug caps 3" << dendl;
       if ((wanted & CEPH_CAP_XATTR_SHARED) &&
 	  !(ist.xattr_version > 0 && ist.xattrbl.length() > 0))
 	  assert(0 == "MDS reply does not contain xattrs");
     }
 
+    ldout(cct, 2) << __func__ << " enter add_update_inode" << dendl;
     in = add_update_inode(&ist, request->sent_stamp, session);
     ldout(cct, 2) << __func__ << " decoding inode " << *in << dendl;
 
     // corefs - decoding prefetched inode and update
-    if(reply->head.is_target >= 2){
-      int num_inode_prefetched = reply->head.is_target - 1;
-      ldout(cct, 2) << __func__ << " corefs.num_inode_prefetched=" << num_inode_prefetched << dendl;
+    if(reply->head.is_target == 2){
+      // int num_inode_prefetched = reply->head.is_target - 1;
+      // ldout(cct, 2) << __func__ << " corefs.num_inode_prefetched=" << num_inode_prefetched << dendl;
       int i = 0;
       // for prefetched inode
       InodeStat ist_phd;
@@ -1721,7 +1731,7 @@ int Client::make_request(MetaRequest *request,
 			 bufferlist *pdirbl)
 {
   int r = 0;
-
+  unsigned long No_mdr = ++num_mdr;
   ldout(cct,10) << __func__ << dendl;
   // assign a unique tid
   ceph_tid_t tid = ++last_tid;
@@ -1852,7 +1862,8 @@ int Client::make_request(MetaRequest *request,
   // -- log times --
   utime_t lat = ceph_clock_now(cct);
   lat -= request->sent_stamp;
-  ldout(cct, 20) << "lat " << lat << dendl;
+  // ldout(cct, 20) << "lat " << lat << dendl;
+  ldout(cct, 1) << "(No_mdr." << No_mdr << ", op." << ceph_mds_op_name(request->get_op()) << ", lat." << lat << ")" << dendl;
   logger->tinc(l_c_lat, lat);
   logger->tinc(l_c_reply, lat);
 
@@ -6514,7 +6525,7 @@ int Client::_getattr(Inode *in, int mask, int uid, int gid, bool force)
 
   ldout(cct, 10) << "_getattr mask " << ccap_string(mask) << " issued=" << yes << dendl;
   if (yes && !force){
-    ldout(cct, 1) << "[cache-hit]" << dendl;
+    // ldout(cct, 1) << "[cache-hit]" << dendl;
     return 0;
   }
 
@@ -6527,7 +6538,7 @@ int Client::_getattr(Inode *in, int mask, int uid, int gid, bool force)
   
   int res = make_request(req, uid, gid);
   ldout(cct, 10) << "_getattr result=" << res << dendl;
-  ldout(cct, 1) << "[cache-miss]" << dendl;
+  // ldout(cct, 1) << "[cache-miss]" << dendl;
   return res;
 }
 

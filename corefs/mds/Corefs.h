@@ -135,16 +135,39 @@ CInode* Server::corefs_prefetch_cinode(char* filename){
 	return NULL;
 }
 
-// int r = mdcache->path_traverse(mdr, NULL, NULL, refpath, &mdr->dn[n], &mdr->in[n], MDS_TRAVERSE_FORWARD);
+void Server::mon_req_init(){
+	int i = 0;
+	for(;i<23;i++){
+		mon_op[i] = 0;
+		mon_req[i] = 0;
+	}
+	return;
+}
 
-// int MDCache::path_traverse(MDRequestRef& mdr, Message *req, MDSInternalContextBase *fin,     // who
-// 			   const filepath& path,                   // what
-//                            vector<CDentry*> *pdnvec,         // result
-// 			   CInode **pin,
-//                            int onfail)
-
-// vector<CDentry*> Server::corefs_prefetch_dentry(char *filename){
-	
-// }
+void* Server::count_load_thread(void* args){
+	int i;
+	int load;
+	int ops;
+	int tmp[OP_NUM] = {0};
+	Server* server = reinterpret_cast<Server *>(args);
+	MDSRank* mds = server->mds;
+	while(1){
+		i = 0;
+		load = 0;
+		ops = 0;
+		sleep(1);
+		for(;i<OP_NUM;i++){
+			// dout(1) << "debug:i." << i << dendl;
+			// if(server->mon_req[i] != 0)
+			// 	dout(1) << "-" << __func__ << "-" << " mon_req[" << i << "]." << server->mon_req[i] << dendl;
+			ops += (server->mon_op[i] - tmp[i]);
+			tmp[i] = server->mon_op[i];
+			load += server->mon_req[i];
+		}
+		dout(1) << "-" << __func__ << "-" << " current_load_ops." << load << dendl;
+		dout(1) << "[" << __func__ << "]" << " iops." << ops << dendl;
+	}
+	return NULL;
+}
 
 #endif
