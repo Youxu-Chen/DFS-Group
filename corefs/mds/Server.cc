@@ -1344,7 +1344,7 @@ void Server::set_trace_dist(Session *session, MClientReply *reply,
 
   dout(2) << "corefs_test num_inode_encode " << tracei_prefetched.size() << dendl;
   dout(2) << "corefs_test num_dn_vector " << tracedn_prefetched.size() << dendl;
-  for(vector<vector<CDentry*>>::iterator iter = tracedn_prefetched.begin(); iter != tracedn_prefetched.end(); iter++, i++){
+  for(vector<vector<CDentry*>>::iterator iter = mdr->tracedn_prefetched.begin(); iter != mdr->tracedn_prefetched.end(); iter++, i++){
     dout(2) << "corefs_test num_dn in vector " << i << " is "  << (*iter).size() << dendl;
     num_inode_prefetched++;
     ::encode(tracedn_prefetched[i].size(), bl);
@@ -1372,6 +1372,7 @@ void Server::set_trace_dist(Session *session, MClientReply *reply,
     }
       tracei_prefetched[i]->encode_inodestat(bl, session, NULL, snapid, 0, mdr->getattr_caps);
       dout(2) << "corefs_set_trace_dist added inode " << *(tracei_prefetched[i]) << dendl;
+      (*iter).clear();
   }
   // free memory
   // std::vector<CInode*>().swap(mdr->tracei_prefetched);
@@ -3418,8 +3419,8 @@ void Server::handle_client_open(MDRequestRef& mdr)
     std::map<std::string, bufferptr>::iterator pxat = cur->xattrs.begin();
     std::string filename_corre;
     int j = 0;
-    int max = 5;
-    for(pxat; pxat != cur->xattrs.end(); pxat++, j++){
+    int max = 10;
+    for(; pxat != cur->xattrs.end(); pxat++, j++){
       if(j >= max)
         break;
       filename_corre = pxat->first;
